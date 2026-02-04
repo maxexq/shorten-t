@@ -4,13 +4,16 @@ const app = require('./app');
 const connectDB = require('./config/database');
 const config = require('./config');
 
-const startServer = async () => {
-  await connectDB();
+// Connect to database
+connectDB();
 
+// For local development
+if (process.env.NODE_ENV !== 'production') {
   app.listen(config.port, () => {
     console.log(`Server running on port ${config.port}`);
     console.log(`Base URL: ${config.baseUrl}`);
   });
-};
+}
 
-startServer();
+// Export for Vercel
+module.exports = app;
