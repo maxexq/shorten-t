@@ -1,11 +1,9 @@
-require('dotenv').config();
+if (process.env.NODE_ENV !== 'production') {
+  require('dotenv').config();
+}
 
 const app = require('./app');
-const connectDB = require('./config/database');
 const config = require('./config');
-
-// Connect to database
-connectDB();
 
 // For local development
 if (process.env.NODE_ENV !== 'production') {

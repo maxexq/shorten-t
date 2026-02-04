@@ -2,12 +2,23 @@ const express = require('express');
 const routes = require('./routes');
 const urlController = require('./controllers/urlController');
 const errorHandler = require('./middlewares/errorHandler');
+const connectDB = require('./config/database');
 
 const app = express();
 
 // Body parser middleware
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Ensure DB connection for each request (serverless)
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
 
 // Health check endpoint
 app.get('/health', (req, res) => {
