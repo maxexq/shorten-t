@@ -1,10 +1,10 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 const urlSchema = new mongoose.Schema(
   {
     originalUrl: {
       type: String,
-      required: [true, 'Original URL is required'],
+      required: [true, "Original URL is required"],
     },
     shortCode: {
       type: String,
@@ -23,7 +23,7 @@ const urlSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-  }
+  },
 );
 
 urlSchema.methods.incrementClicks = async function () {
@@ -31,4 +31,4 @@ urlSchema.methods.incrementClicks = async function () {
   return this.save();
 };
 
-module.exports = mongoose.model('Url', urlSchema, 'shorten-t');
+module.exports = mongoose.model("Url", urlSchema, "shorten-t");

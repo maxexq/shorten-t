@@ -4,12 +4,26 @@
     {
       "src": "src/server.js",
       "use": "@vercel/node"
+    },
+    {
+      "src": "api/cron/sync-clicks.js",
+      "use": "@vercel/node"
     }
   ],
   "routes": [
     {
+      "src": "/api/cron/sync-clicks",
+      "dest": "api/cron/sync-clicks.js"
+    },
+    {
       "src": "/(.*)",
       "dest": "src/server.js"
+    }
+  ],
+  "crons": [
+    {
+      "path": "/api/cron/sync-clicks",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

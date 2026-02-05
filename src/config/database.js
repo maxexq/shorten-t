@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 let cached = global.mongoose;
 
@@ -15,7 +15,7 @@ const connectDB = async () => {
     cached.promise = mongoose
       .connect(process.env.MONGODB_URI)
       .then((mongoose) => {
-        console.log('MongoDB Connected');
+        console.log("MongoDB Connected");
         return mongoose;
       })
       .catch((error) => {

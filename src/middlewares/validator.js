@@ -1,26 +1,28 @@
-const { body, validationResult } = require('express-validator');
+const { body, validationResult } = require("express-validator");
 
 const validateUrl = [
-  body('url')
+  body("url")
     .trim()
     .notEmpty()
-    .withMessage('URL is required')
+    .withMessage("URL is required")
     .isURL({ require_protocol: true })
-    .withMessage('Please provide a valid URL with protocol (http/https)'),
-  body('customCode')
+    .withMessage("Please provide a valid URL with protocol (http/https)"),
+  body("customCode")
     .optional()
     .trim()
     .isLength({ min: 3, max: 20 })
-    .withMessage('Custom code must be between 3 and 20 characters')
+    .withMessage("Custom code must be between 3 and 20 characters")
     .matches(/^[a-zA-Z0-9_-]+$/)
-    .withMessage('Custom code can only contain letters, numbers, hyphens, and underscores'),
-  body('expiresAt')
+    .withMessage(
+      "Custom code can only contain letters, numbers, hyphens, and underscores",
+    ),
+  body("expiresAt")
     .optional()
     .isISO8601()
-    .withMessage('Invalid date format')
+    .withMessage("Invalid date format")
     .custom((value) => {
       if (new Date(value) <= new Date()) {
-        throw new Error('Expiration date must be in the future');
+        throw new Error("Expiration date must be in the future");
       }
       return true;
     }),
