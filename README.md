@@ -12,6 +12,8 @@ A modern, scalable URL shortener API built with Node.js, Express, and MongoDB.
 - URL expiration support
 - Paginated URL listing
 - Input validation
+- Swagger UI API documentation
+- CORS enabled
 - Production-ready with Vercel deployment
 
 ## Tech Stack
@@ -29,14 +31,18 @@ A modern, scalable URL shortener API built with Node.js, Express, and MongoDB.
 
 ```
 shorten-t/
+├── api/
+│   └── cron/            # Vercel cron endpoints
+│       └── sync-clicks.js
 ├── src/
 │   ├── config/          # Database, Redis & app configuration
 │   │   ├── database.js
 │   │   ├── redis.js
+│   │   ├── swagger.json
 │   │   └── index.js
 │   ├── controllers/     # Request handlers
 │   │   └── urlController.js
-│   ├── jobs/            # Scheduled tasks
+│   ├── jobs/            # Scheduled tasks (local dev)
 │   │   └── syncClicks.js
 │   ├── middlewares/     # Error handling & validation
 │   │   ├── errorHandler.js
@@ -52,8 +58,10 @@ shorten-t/
 │   │   └── generateCode.js
 │   ├── app.js           # Express app setup
 │   └── server.js        # Entry point
+├── __tests__/           # Unit tests
 ├── .env.example
 ├── .gitignore
+├── jest.config.js
 ├── package.json
 ├── vercel.json
 └── README.md
@@ -64,6 +72,8 @@ shorten-t/
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/` | API info and version |
+| `GET` | `/api-docs` | Swagger UI documentation |
+| `GET` | `/swagger.json` | OpenAPI specification |
 | `POST` | `/api/shorten` | Create a shortened URL |
 | `GET` | `/api/urls` | List all URLs (paginated) |
 | `GET` | `/api/stats/:shortCode` | Get URL statistics |
@@ -103,6 +113,12 @@ PORT=3000
 MONGODB_URI=mongodb://localhost:27017/shorten-t
 BASE_URL=http://localhost:3000
 REDIS_URL=redis://localhost:6379
+CRON_SECRET=<your-cron-secret-here>
+```
+
+Generate `CRON_SECRET`:
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 ```
 
 5. Start the server:
@@ -202,6 +218,32 @@ curl -X DELETE http://localhost:3000/api/abc123
 
 Visit `http://localhost:3000/abc123` in browser to redirect to original URL.
 
+## API Documentation
+
+Interactive API documentation is available via Swagger UI:
+
+- **Local:** http://localhost:3000/api-docs
+- **Production:** https://shorten-t.vercel.app/api-docs
+
+OpenAPI specification: `/swagger.json`
+
+## Testing
+
+Run unit tests:
+```bash
+npm test
+```
+
+Run tests in watch mode:
+```bash
+npm run test:watch
+```
+
+Run tests with coverage:
+```bash
+npm run test:coverage
+```
+
 ## Deployment
 
 ### Vercel
@@ -221,6 +263,7 @@ vercel --prod
    - `MONGODB_URI` - Your MongoDB connection string
    - `BASE_URL` - Your production URL (e.g., `https://shorten-t.vercel.app`)
    - `REDIS_URL` - Your Redis connection string (e.g., Upstash)
+   - `CRON_SECRET` - Secret for securing cron endpoints
    - `NODE_ENV` - `production`
 
 ## Live Demo
