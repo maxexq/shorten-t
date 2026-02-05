@@ -23,7 +23,7 @@
   "crons": [
     {
       "path": "/api/cron/sync-clicks",
-      "schedule": "*/5 * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }

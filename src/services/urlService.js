@@ -37,8 +37,9 @@ class UrlService {
     console.log("cachedUrl:", cachedUrl);
 
     if (cachedUrl) {
-      const clickCount = await redisClient.incr(clicksKey);
-      console.log("Cache hit! clicks:", clickCount);
+      // Increment in Redis for speed, sync to MongoDB in background
+      await redisClient.incr(clicksKey);
+      this.syncClickInBackground(shortCode);
       return cachedUrl;
     }
 
@@ -54,11 +55,17 @@ class UrlService {
 
     console.log("Saving to Redis:", cacheKey, url.originalUrl);
     await redisClient.setEx(cacheKey, 86400, url.originalUrl);
-    const clickCount = await redisClient.incr(clicksKey);
-    console.log("Saved to Redis successfully, clicks:", clickCount);
+    await redisClient.incr(clicksKey);
 
     await url.incrementClicks();
     return url.originalUrl;
+  }
+
+  // Sync single click to MongoDB (non-blocking)
+  syncClickInBackground(shortCode) {
+    Url.findOneAndUpdate({ shortCode }, { $inc: { clicks: 1 } }).catch((err) =>
+      console.error("Background click sync error:", err),
+    );
   }
 
   async syncClicksToDatabase() {
