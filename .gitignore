@@ -7,3 +7,6 @@ node_modules/
 .env*.local
 bruno.json
 Shorten-T/
+
+# Test coverage
+coverage/
