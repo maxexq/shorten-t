@@ -1,8 +1,11 @@
 const express = require("express");
+const cors = require("cors");
 const routes = require("./routes");
 const urlController = require("./controllers/urlController");
 const errorHandler = require("./middlewares/errorHandler");
 const connectDB = require("./config/database");
+const swaggerUi = require("swagger-ui-express");
+const swaggerDocument = require("./config/swagger.json");
 
 // Start cron jobs (local only - Vercel uses vercel.json crons)
 if (process.env.NODE_ENV !== "production") {
@@ -10,6 +13,9 @@ if (process.env.NODE_ENV !== "production") {
 }
 
 const app = express();
+
+// CORS middleware
+app.use(cors());
 
 // Body parser middleware
 app.use(express.json());
@@ -33,6 +39,9 @@ app.get("/", (req, res) => {
 app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
 });
+
+// Swagger UI
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 // API routes
 app.use(routes);
