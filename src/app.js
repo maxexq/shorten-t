@@ -25,6 +25,10 @@ app.use(async (req, res, next) => {
   }
 });
 
+app.get("/", (req, res) => {
+  res.json({ message: "Welcome to the URL Shortener API!", version: "1.0.0" });
+});
+
 // Health check endpoint
 app.get("/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });
