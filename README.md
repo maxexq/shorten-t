@@ -7,6 +7,8 @@ A modern, scalable URL shortener API built with Node.js, Express, and MongoDB.
 - Shorten long URLs with auto-generated or custom short codes
 - 301 redirect to original URLs
 - Click tracking and analytics
+- Redis caching for high-performance redirects
+- Scheduled click sync from Redis to MongoDB
 - URL expiration support
 - Paginated URL listing
 - Input validation
@@ -17,6 +19,8 @@ A modern, scalable URL shortener API built with Node.js, Express, and MongoDB.
 - **Runtime:** Node.js
 - **Framework:** Express.js
 - **Database:** MongoDB (Mongoose ODM)
+- **Cache:** Redis
+- **Scheduler:** node-cron
 - **Validation:** express-validator
 - **ID Generation:** nanoid
 - **Deployment:** Vercel
@@ -26,11 +30,14 @@ A modern, scalable URL shortener API built with Node.js, Express, and MongoDB.
 ```
 shorten-t/
 ├── src/
-│   ├── config/          # Database & app configuration
+│   ├── config/          # Database, Redis & app configuration
 │   │   ├── database.js
+│   │   ├── redis.js
 │   │   └── index.js
 │   ├── controllers/     # Request handlers
 │   │   └── urlController.js
+│   ├── jobs/            # Scheduled tasks
+│   │   └── syncClicks.js
 │   ├── middlewares/     # Error handling & validation
 │   │   ├── errorHandler.js
 │   │   └── validator.js
@@ -56,6 +63,7 @@ shorten-t/
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
+| `GET` | `/` | API info and version |
 | `POST` | `/api/shorten` | Create a shortened URL |
 | `GET` | `/api/urls` | List all URLs (paginated) |
 | `GET` | `/api/stats/:shortCode` | Get URL statistics |
@@ -69,6 +77,7 @@ shorten-t/
 
 - Node.js 18+
 - MongoDB (local or Atlas)
+- Redis (local or cloud service like Upstash)
 
 ### Installation
 
@@ -93,6 +102,7 @@ cp .env.example .env
 PORT=3000
 MONGODB_URI=mongodb://localhost:27017/shorten-t
 BASE_URL=http://localhost:3000
+REDIS_URL=redis://localhost:6379
 ```
 
 5. Start the server:
@@ -210,6 +220,7 @@ vercel --prod
 3. Set environment variables in Vercel Dashboard:
    - `MONGODB_URI` - Your MongoDB connection string
    - `BASE_URL` - Your production URL (e.g., `https://shorten-t.vercel.app`)
+   - `REDIS_URL` - Your Redis connection string (e.g., Upstash)
    - `NODE_ENV` - `production`
 
 ## Live Demo
