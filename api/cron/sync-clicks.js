@@ -1,3 +1,4 @@
+const connectDB = require("../../src/config/database");
 const urlService = require("../../src/services/urlService");
 
 module.exports = async function handler(req, res) {
@@ -7,6 +8,7 @@ module.exports = async function handler(req, res) {
   }
 
   try {
+    await connectDB();
     await urlService.syncClicksToDatabase();
     res.json({ success: true, message: "Clicks synced to database" });
   } catch (error) {
