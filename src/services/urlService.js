@@ -1,7 +1,7 @@
 const Url = require("../models/Url");
 const { generateShortCode } = require("../utils/generateCode");
 const config = require("../config");
-const redisClient = require("../config/redis");
+const { getCacheManager } = require("../utils/cacheManager");
 
 class UrlService {
   async createShortUrl(originalUrl, customCode = null, expiresAt = null) {
@@ -18,6 +18,9 @@ class UrlService {
       expiresAt,
     });
 
+    const cacheManager = getCacheManager();
+    await cacheManager.setUrl(shortCode, originalUrl);
+
     return {
       id: url._id,
       originalUrl: url.originalUrl,
@@ -29,16 +32,15 @@ class UrlService {
   }
 
   async getOriginalUrl(shortCode) {
-    const cacheKey = `link:${shortCode}`;
-    const clicksKey = `clicks:${shortCode}`;
+    const cacheManager = getCacheManager();
 
-    const cachedUrl = await redisClient.get(cacheKey);
+    const cachedUrl = await cacheManager.getUrl(shortCode);
 
     console.log("cachedUrl:", cachedUrl);
 
     if (cachedUrl) {
       console.log("cache hit, incrementing clicks");
-      await redisClient.incr(clicksKey);
+      await cacheManager.incrementClicks(shortCode);
       return cachedUrl;
     }
 
@@ -52,28 +54,34 @@ class UrlService {
       throw { status: 410, message: "URL has expired" };
     }
 
-    console.log("Saving to Redis:", cacheKey, url.originalUrl);
-    await redisClient.setEx(cacheKey, 86400, url.originalUrl);
+    console.log("Saving to cache:", shortCode, url.originalUrl);
+    await cacheManager.setUrl(shortCode, url.originalUrl);
 
     await url.incrementClicks();
     return url.originalUrl;
   }
 
   async syncClicksToDatabase() {
+    const cacheManager = getCacheManager();
+
+    if (!cacheManager.isHealthy()) {
+      console.log("Skipping clicks sync - Redis unavailable (circuit breaker open)");
+      return;
+    }
+
     console.log("Starting clicks sync...");
-    const keys = await redisClient.keys("clicks:*");
+    const keys = await cacheManager.getClickKeys();
     console.log("Found click keys:", keys);
 
     for (const key of keys) {
       const shortCode = key.replace("clicks:", "");
-      const clicks = await redisClient.get(key);
+      const clicks = await cacheManager.getAndResetClicks(shortCode);
 
-      if (clicks && parseInt(clicks) > 0) {
+      if (clicks > 0) {
         await Url.findOneAndUpdate(
           { shortCode },
-          { $inc: { clicks: parseInt(clicks) } },
+          { $inc: { clicks } },
         );
-        await redisClient.set(key, "0");
         console.log(`Synced ${clicks} clicks for ${shortCode}`);
       }
     }
@@ -104,6 +112,9 @@ class UrlService {
     if (!result) {
       throw { status: 404, message: "URL not found" };
     }
+
+    const cacheManager = getCacheManager();
+    await cacheManager.deleteCache(shortCode);
 
     return { message: "URL deleted successfully" };
   }
