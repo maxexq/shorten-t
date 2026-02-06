@@ -1,13 +1,31 @@
 const Url = require('../../src/models/Url');
-const redisClient = require('../../src/config/redis');
 const { generateShortCode } = require('../../src/utils/generateCode');
+
+// Mock CacheManager
+const mockCacheManager = {
+  getUrl: jest.fn(),
+  setUrl: jest.fn(),
+  incrementClicks: jest.fn(),
+  getClickKeys: jest.fn(),
+  getAndResetClicks: jest.fn(),
+  deleteCache: jest.fn(),
+  isHealthy: jest.fn().mockReturnValue(true),
+};
 
 // Mock dependencies
 jest.mock('../../src/models/Url');
-jest.mock('../../src/config/redis');
 jest.mock('../../src/utils/generateCode');
 jest.mock('../../src/config', () => ({
   baseUrl: 'http://localhost:3000',
+  cache: {
+    failureThreshold: 5,
+    resetTimeout: 30000,
+    ttl: 86400,
+  },
+}));
+jest.mock('../../src/utils/cacheManager', () => ({
+  getCacheManager: () => mockCacheManager,
+  initCacheManager: jest.fn(),
 }));
 
 // Import service after mocks are set up
@@ -16,6 +34,7 @@ const urlService = require('../../src/services/urlService');
 describe('UrlService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    mockCacheManager.isHealthy.mockReturnValue(true);
   });
 
   describe('createShortUrl', () => {
@@ -31,6 +50,7 @@ describe('UrlService', () => {
       generateShortCode.mockReturnValue('abc1234');
       Url.findOne.mockResolvedValue(null);
       Url.create.mockResolvedValue(mockUrl);
+      mockCacheManager.setUrl.mockResolvedValue(true);
 
       const result = await urlService.createShortUrl('https://example.com');
 
@@ -41,6 +61,7 @@ describe('UrlService', () => {
         shortCode: 'abc1234',
         expiresAt: null,
       });
+      expect(mockCacheManager.setUrl).toHaveBeenCalledWith('abc1234', 'https://example.com');
       expect(result.shortUrl).toBe('http://localhost:3000/abc1234');
     });
 
@@ -55,6 +76,7 @@ describe('UrlService', () => {
 
       Url.findOne.mockResolvedValue(null);
       Url.create.mockResolvedValue(mockUrl);
+      mockCacheManager.setUrl.mockResolvedValue(true);
 
       const result = await urlService.createShortUrl('https://example.com', 'mycode');
 
@@ -88,6 +110,7 @@ describe('UrlService', () => {
       generateShortCode.mockReturnValue('abc1234');
       Url.findOne.mockResolvedValue(null);
       Url.create.mockResolvedValue(mockUrl);
+      mockCacheManager.setUrl.mockResolvedValue(true);
 
       const result = await urlService.createShortUrl('https://example.com', null, expiresAt);
 
@@ -101,38 +124,38 @@ describe('UrlService', () => {
   });
 
   describe('getOriginalUrl', () => {
-    it('should return cached URL and increment Redis clicks', async () => {
-      redisClient.get.mockResolvedValue('https://example.com');
-      redisClient.incr.mockResolvedValue(1);
+    it('should return cached URL and increment clicks via CacheManager', async () => {
+      mockCacheManager.getUrl.mockResolvedValue('https://example.com');
+      mockCacheManager.incrementClicks.mockResolvedValue({ source: 'redis' });
 
       const result = await urlService.getOriginalUrl('abc1234');
 
-      expect(redisClient.get).toHaveBeenCalledWith('link:abc1234');
-      expect(redisClient.incr).toHaveBeenCalledWith('clicks:abc1234');
+      expect(mockCacheManager.getUrl).toHaveBeenCalledWith('abc1234');
+      expect(mockCacheManager.incrementClicks).toHaveBeenCalledWith('abc1234');
       expect(result).toBe('https://example.com');
     });
 
-    it('should fetch from DB and cache when not in Redis', async () => {
+    it('should fetch from DB and cache when not in cache', async () => {
       const mockUrl = {
         originalUrl: 'https://example.com',
         expiresAt: null,
         incrementClicks: jest.fn().mockResolvedValue({}),
       };
 
-      redisClient.get.mockResolvedValue(null);
-      redisClient.setEx.mockResolvedValue('OK');
+      mockCacheManager.getUrl.mockResolvedValue(null);
+      mockCacheManager.setUrl.mockResolvedValue(true);
       Url.findOne.mockResolvedValue(mockUrl);
 
       const result = await urlService.getOriginalUrl('abc1234');
 
       expect(Url.findOne).toHaveBeenCalledWith({ shortCode: 'abc1234' });
-      expect(redisClient.setEx).toHaveBeenCalledWith('link:abc1234', 86400, 'https://example.com');
+      expect(mockCacheManager.setUrl).toHaveBeenCalledWith('abc1234', 'https://example.com');
       expect(mockUrl.incrementClicks).toHaveBeenCalled();
       expect(result).toBe('https://example.com');
     });
 
     it('should throw 404 if URL not found', async () => {
-      redisClient.get.mockResolvedValue(null);
+      mockCacheManager.getUrl.mockResolvedValue(null);
       Url.findOne.mockResolvedValue(null);
 
       await expect(urlService.getOriginalUrl('notfound')).rejects.toEqual({
@@ -147,7 +170,7 @@ describe('UrlService', () => {
         expiresAt: new Date('2020-01-01'),
       };
 
-      redisClient.get.mockResolvedValue(null);
+      mockCacheManager.getUrl.mockResolvedValue(null);
       Url.findOne.mockResolvedValue(mockUrl);
 
       await expect(urlService.getOriginalUrl('expired')).rejects.toEqual({
@@ -187,12 +210,14 @@ describe('UrlService', () => {
   });
 
   describe('deleteUrl', () => {
-    it('should delete URL successfully', async () => {
+    it('should delete URL and clear cache successfully', async () => {
       Url.findOneAndDelete.mockResolvedValue({ shortCode: 'abc1234' });
+      mockCacheManager.deleteCache.mockResolvedValue(true);
 
       const result = await urlService.deleteUrl('abc1234');
 
       expect(Url.findOneAndDelete).toHaveBeenCalledWith({ shortCode: 'abc1234' });
+      expect(mockCacheManager.deleteCache).toHaveBeenCalledWith('abc1234');
       expect(result.message).toBe('URL deleted successfully');
     });
 
@@ -261,31 +286,38 @@ describe('UrlService', () => {
   });
 
   describe('syncClicksToDatabase', () => {
-    it('should sync clicks from Redis to MongoDB', async () => {
-      redisClient.keys.mockResolvedValue(['clicks:code1', 'clicks:code2']);
-      redisClient.get
-        .mockResolvedValueOnce('5')
-        .mockResolvedValueOnce('10');
-      redisClient.set.mockResolvedValue('OK');
+    it('should sync clicks from cache to MongoDB', async () => {
+      mockCacheManager.getClickKeys.mockResolvedValue(['clicks:code1', 'clicks:code2']);
+      mockCacheManager.getAndResetClicks
+        .mockResolvedValueOnce(5)
+        .mockResolvedValueOnce(10);
       Url.findOneAndUpdate.mockResolvedValue({});
 
       await urlService.syncClicksToDatabase();
 
-      expect(redisClient.keys).toHaveBeenCalledWith('clicks:*');
+      expect(mockCacheManager.getClickKeys).toHaveBeenCalled();
       expect(Url.findOneAndUpdate).toHaveBeenCalledTimes(2);
       expect(Url.findOneAndUpdate).toHaveBeenCalledWith(
         { shortCode: 'code1' },
         { $inc: { clicks: 5 } }
       );
-      expect(redisClient.set).toHaveBeenCalledWith('clicks:code1', '0');
     });
 
     it('should skip keys with zero clicks', async () => {
-      redisClient.keys.mockResolvedValue(['clicks:code1']);
-      redisClient.get.mockResolvedValue('0');
+      mockCacheManager.getClickKeys.mockResolvedValue(['clicks:code1']);
+      mockCacheManager.getAndResetClicks.mockResolvedValue(0);
 
       await urlService.syncClicksToDatabase();
 
+      expect(Url.findOneAndUpdate).not.toHaveBeenCalled();
+    });
+
+    it('should skip sync when circuit breaker is open', async () => {
+      mockCacheManager.isHealthy.mockReturnValue(false);
+
+      await urlService.syncClicksToDatabase();
+
+      expect(mockCacheManager.getClickKeys).not.toHaveBeenCalled();
       expect(Url.findOneAndUpdate).not.toHaveBeenCalled();
     });
   });
