@@ -4,6 +4,7 @@ const {
   validateUrl,
   handleValidationErrors,
 } = require("../middlewares/validator");
+const { createLinkLimiter } = require("../config/rateLimit");
 
 const router = express.Router();
 
@@ -11,6 +12,7 @@ const router = express.Router();
 router.post(
   "/shorten",
   validateUrl,
+  createLinkLimiter,
   handleValidationErrors,
   urlController.createShortUrl,
 );
