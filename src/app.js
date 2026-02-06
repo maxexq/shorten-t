@@ -31,12 +31,22 @@ app.use(async (req, res, next) => {
 });
 
 app.get("/", (req, res) => {
-  res.json({ message: "Welcome to the URL Shortener API!", version: "1.0.0" });
+  res.json({ message: "Welcome to the URL Shortener API!", version: "0.0.1" });
 });
 
 // Health check endpoint
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date().toISOString() });
+  const dbHealthy = connectDB.isHealthy();
+  const status = dbHealthy ? "ok" : "degraded";
+  const httpStatus = dbHealthy ? 200 : 503;
+
+  res.status(httpStatus).json({
+    status,
+    timestamp: new Date().toISOString(),
+    services: {
+      mongodb: dbHealthy ? "connected" : "unavailable",
+    },
+  });
 });
 
 // Swagger JSON endpoint
