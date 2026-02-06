@@ -1,7 +1,7 @@
 const Url = require("../models/Url");
 const { generateShortCode } = require("../utils/generateCode");
 const config = require("../config");
-const { getCacheManager } = require("../utils/cacheManager");
+const cache = require("../utils/cacheManager");
 
 class UrlService {
   async createShortUrl(originalUrl, customCode = null, expiresAt = null) {
@@ -18,8 +18,8 @@ class UrlService {
       expiresAt,
     });
 
-    const cacheManager = getCacheManager();
-    await cacheManager.setUrl(shortCode, originalUrl);
+    // Cache the new URL
+    await cache.setUrl(shortCode, originalUrl);
 
     return {
       id: url._id,
@@ -32,18 +32,15 @@ class UrlService {
   }
 
   async getOriginalUrl(shortCode) {
-    const cacheManager = getCacheManager();
-
-    const cachedUrl = await cacheManager.getUrl(shortCode);
-
-    console.log("cachedUrl:", cachedUrl);
+    // Try cache first
+    const cachedUrl = await cache.getUrl(shortCode);
 
     if (cachedUrl) {
-      console.log("cache hit, incrementing clicks");
-      await cacheManager.incrementClicks(shortCode);
+      await cache.incrementClicks(shortCode);
       return cachedUrl;
     }
 
+    // Cache miss - get from database
     const url = await Url.findOne({ shortCode });
 
     if (!url) {
@@ -54,38 +51,36 @@ class UrlService {
       throw { status: 410, message: "URL has expired" };
     }
 
-    console.log("Saving to cache:", shortCode, url.originalUrl);
-    await cacheManager.setUrl(shortCode, url.originalUrl);
+    // Cache for next time
+    await cache.setUrl(shortCode, url.originalUrl);
 
+    // Increment clicks in database (first visit)
     await url.incrementClicks();
+
     return url.originalUrl;
   }
 
   async syncClicksToDatabase() {
-    const cacheManager = getCacheManager();
-
-    if (!cacheManager.isHealthy()) {
-      console.log("Skipping clicks sync - Redis unavailable (circuit breaker open)");
+    if (!cache.isHealthy()) {
+      console.log("Sync skipped: Redis unavailable");
       return;
     }
 
-    console.log("Starting clicks sync...");
-    const keys = await cacheManager.getClickKeys();
-    console.log("Found click keys:", keys);
+    console.log("Syncing clicks to database...");
+
+    const keys = await cache.getClicksKeys();
 
     for (const key of keys) {
       const shortCode = key.replace("clicks:", "");
-      const clicks = await cacheManager.getAndResetClicks(shortCode);
+      const clicks = await cache.getAndResetClicks(shortCode);
 
       if (clicks > 0) {
-        await Url.findOneAndUpdate(
-          { shortCode },
-          { $inc: { clicks } },
-        );
+        await Url.findOneAndUpdate({ shortCode }, { $inc: { clicks } });
         console.log(`Synced ${clicks} clicks for ${shortCode}`);
       }
     }
-    console.log("Clicks sync complete");
+
+    console.log("Sync complete");
   }
 
   async getUrlStats(shortCode) {
@@ -113,8 +108,8 @@ class UrlService {
       throw { status: 404, message: "URL not found" };
     }
 
-    const cacheManager = getCacheManager();
-    await cacheManager.deleteCache(shortCode);
+    // Clear from cache
+    await cache.deleteUrl(shortCode);
 
     return { message: "URL deleted successfully" };
   }

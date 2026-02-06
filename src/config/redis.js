@@ -1,44 +1,22 @@
 const redis = require("redis");
-const { initCacheManager } = require("../utils/cacheManager");
 
-const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+// Force localhost in development, use env var in production
+const redisUrl =
+  process.env.NODE_ENV === "production"
+    ? process.env.REDIS_URL
+    : "redis://localhost:6379";
 
+console.log("Redis connecting to:", redisUrl);
 const redisClient = redis.createClient({ url: redisUrl });
 
-let isConnected = false;
+redisClient.on("connect", () => console.log("Redis: connecting..."));
+redisClient.on("ready", () => console.log("Redis: ready"));
+redisClient.on("error", (err) => console.error("Redis error:", err.message));
+redisClient.on("end", () => console.log("Redis: disconnected"));
 
-redisClient.on("connect", () => {
-  console.log("Connected to Redis");
+// Connect immediately
+redisClient.connect().catch((err) => {
+  console.error("Redis connection failed:", err.message);
 });
 
-redisClient.on("error", (err) => {
-  isConnected = false;
-  console.error("Redis error:", err);
-});
-
-redisClient.on("ready", () => {
-  isConnected = true;
-  console.log("Redis is ready");
-});
-
-redisClient.on("end", () => {
-  isConnected = false;
-  console.log("Redis connection closed");
-});
-
-const connectRedis = async () => {
-  try {
-    await redisClient.connect();
-    initCacheManager(redisClient);
-  } catch (err) {
-    console.error("Failed to connect to Redis:", err);
-    initCacheManager(redisClient);
-  }
-};
-
-connectRedis();
-
-module.exports = {
-  redisClient,
-  isConnected: () => isConnected,
-};
+module.exports = redisClient;

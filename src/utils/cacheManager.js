@@ -1,178 +1,167 @@
+const redis = require("../config/redis");
 const Url = require("../models/Url");
-const config = require("../config");
 
-class CacheManager {
-  constructor(redisClient, options = {}) {
-    this.redis = redisClient;
-    this.failureThreshold = options.failureThreshold || 5;
-    this.resetTimeout = options.resetTimeout || 30000;
-    this.ttl = options.ttl || 86400;
-    this.state = "CLOSED";
-    this.failures = 0;
-    this.lastFailureTime = null;
-  }
+// Circuit breaker state
+const circuit = {
+  state: "CLOSED", // CLOSED = normal, OPEN = skip redis, HALF_OPEN = testing
+  failures: 0,
+  threshold: 5,
+  resetTimeout: 30000,
+  lastFailure: null,
+};
 
-  async execute(redisOperation, fallbackOperation) {
-    if (this.state === "OPEN") {
-      if (Date.now() - this.lastFailureTime > this.resetTimeout) {
-        this.state = "HALF_OPEN";
-        console.log("Circuit breaker HALF_OPEN, testing Redis...");
-      } else {
-        return fallbackOperation();
-      }
+// Check if circuit should allow Redis operations
+function canUseRedis() {
+  if (circuit.state === "CLOSED") return true;
+
+  if (circuit.state === "OPEN") {
+    // Check if enough time passed to retry
+    if (Date.now() - circuit.lastFailure > circuit.resetTimeout) {
+      circuit.state = "HALF_OPEN";
+      console.log("Circuit: HALF_OPEN (testing Redis...)");
+      return true;
     }
-
-    try {
-      const result = await redisOperation();
-      this.onSuccess();
-      return result;
-    } catch (error) {
-      this.onFailure();
-      console.error("Redis operation failed, using fallback:", error.message);
-      return fallbackOperation();
-    }
+    return false;
   }
 
-  onSuccess() {
-    if (this.state === "HALF_OPEN") {
-      console.log("Circuit breaker CLOSED, Redis recovered");
-    }
-    this.failures = 0;
-    this.state = "CLOSED";
+  return true; // HALF_OPEN allows one attempt
+}
+
+// Record success
+function onSuccess() {
+  if (circuit.state !== "CLOSED") {
+    console.log("Circuit: CLOSED (Redis recovered)");
+  }
+  circuit.failures = 0;
+  circuit.state = "CLOSED";
+}
+
+// Record failure
+function onFailure(reason) {
+  circuit.failures++;
+  circuit.lastFailure = Date.now();
+
+  if (circuit.failures >= circuit.threshold) {
+    circuit.state = "OPEN";
+    console.warn(`Circuit: OPEN (${circuit.failures} failures)`);
   }
 
-  onFailure() {
-    this.failures++;
-    this.lastFailureTime = Date.now();
-    if (this.failures >= this.failureThreshold) {
-      this.state = "OPEN";
-      console.warn(`Circuit breaker OPEN after ${this.failures} failures`);
-    }
+  console.error("Redis failed:", reason);
+}
+
+// Helper: execute Redis operation with fallback
+async function tryRedis(operation, fallback) {
+  // Circuit is OPEN - skip Redis entirely
+  if (!canUseRedis()) {
+    return fallback();
   }
 
-  async getUrl(shortCode) {
-    const cacheKey = `link:${shortCode}`;
-
-    return this.execute(
-      async () => {
-        const cachedUrl = await this.redis.get(cacheKey);
-        return cachedUrl;
-      },
-      async () => {
-        return null;
-      },
-    );
+  // Redis client not connected
+  if (!redis.isReady) {
+    onFailure("Redis not ready");
+    return fallback();
   }
 
-  async setUrl(shortCode, originalUrl, ttl = null) {
-    const cacheKey = `link:${shortCode}`;
-    const cacheTtl = ttl || this.ttl;
-
-    return this.execute(
-      async () => {
-        await this.redis.setEx(cacheKey, cacheTtl, originalUrl);
-        return true;
-      },
-      async () => {
-        return false;
-      },
-    );
-  }
-
-  async incrementClicks(shortCode) {
-    const clicksKey = `clicks:${shortCode}`;
-
-    return this.execute(
-      async () => {
-        await this.redis.incr(clicksKey);
-        return { source: "redis" };
-      },
-      async () => {
-        await Url.updateOne({ shortCode }, { $inc: { clicks: 1 } });
-        return { source: "mongodb" };
-      },
-    );
-  }
-
-  async getClickKeys() {
-    return this.execute(
-      async () => {
-        const keys = await this.redis.keys("clicks:*");
-        return keys;
-      },
-      async () => {
-        return [];
-      },
-    );
-  }
-
-  async getAndResetClicks(shortCode) {
-    const clicksKey = `clicks:${shortCode}`;
-
-    return this.execute(
-      async () => {
-        const clicks = await this.redis.get(clicksKey);
-        if (clicks && parseInt(clicks) > 0) {
-          await this.redis.set(clicksKey, "0");
-          return parseInt(clicks);
-        }
-        return 0;
-      },
-      async () => {
-        return 0;
-      },
-    );
-  }
-
-  async deleteCache(shortCode) {
-    const cacheKey = `link:${shortCode}`;
-    const clicksKey = `clicks:${shortCode}`;
-
-    return this.execute(
-      async () => {
-        await this.redis.del(cacheKey);
-        await this.redis.del(clicksKey);
-        return true;
-      },
-      async () => {
-        return false;
-      },
-    );
-  }
-
-  isHealthy() {
-    return this.state === "CLOSED";
-  }
-
-  getState() {
-    return {
-      state: this.state,
-      failures: this.failures,
-      lastFailureTime: this.lastFailureTime,
-    };
+  try {
+    const result = await operation();
+    onSuccess();
+    return result;
+  } catch (error) {
+    onFailure(error.message);
+    return fallback();
   }
 }
 
-let cacheManagerInstance = null;
+// ============ Cache Operations ============
 
-const initCacheManager = (redisClient) => {
-  cacheManagerInstance = new CacheManager(redisClient, {
-    failureThreshold: config.cache?.failureThreshold || 5,
-    resetTimeout: config.cache?.resetTimeout || 30000,
-    ttl: config.cache?.ttl || 86400,
-  });
-  return cacheManagerInstance;
-};
+async function getUrl(shortCode) {
+  if (!shortCode) return null;
 
-const getCacheManager = () => {
-  if (!cacheManagerInstance) {
-    throw new Error("CacheManager not initialized. Call initCacheManager first.");
-  }
-  return cacheManagerInstance;
-};
+  return tryRedis(
+    async () => {
+      const url = await redis.get(`link:${shortCode}`);
+      console.log(`Cache GET: link:${shortCode} = ${url ? "HIT" : "MISS"}`);
+      return url;
+    },
+    () => null,
+  );
+}
+
+async function setUrl(shortCode, originalUrl, ttl = 86400) {
+  if (!shortCode || !originalUrl) return false;
+
+  return tryRedis(
+    async () => {
+      await redis.setEx(`link:${shortCode}`, ttl, originalUrl);
+      console.log(`Cache SET: link:${shortCode}`);
+      return true;
+    },
+    () => {
+      console.log(`Cache SET failed: link:${shortCode}`);
+      return false;
+    },
+  );
+}
+
+async function incrementClicks(shortCode) {
+  if (!shortCode) return;
+
+  return tryRedis(
+    () => redis.incr(`clicks:${shortCode}`),
+    () => Url.updateOne({ shortCode }, { $inc: { clicks: 1 } }),
+  );
+}
+
+async function getClicksKeys() {
+  return tryRedis(
+    () => redis.keys("clicks:*"),
+    () => [],
+  );
+}
+
+async function getAndResetClicks(shortCode) {
+  if (!shortCode) return 0;
+
+  return tryRedis(
+    async () => {
+      const clicks = await redis.get(`clicks:${shortCode}`);
+      const count = parseInt(clicks) || 0;
+      if (count > 0) {
+        await redis.set(`clicks:${shortCode}`, "0");
+      }
+      return count;
+    },
+    () => 0,
+  );
+}
+
+async function deleteUrl(shortCode) {
+  if (!shortCode) return;
+
+  return tryRedis(
+    async () => {
+      await redis.del(`link:${shortCode}`);
+      await redis.del(`clicks:${shortCode}`);
+    },
+    () => {},
+  );
+}
+
+function isHealthy() {
+  return circuit.state === "CLOSED" && redis.isReady;
+}
+
+function getStatus() {
+  return { ...circuit };
+}
 
 module.exports = {
-  CacheManager,
-  initCacheManager,
-  getCacheManager,
+  getUrl,
+  setUrl,
+  incrementClicks,
+  getClicksKeys,
+  getAndResetClicks,
+  deleteUrl,
+  isHealthy,
+  getStatus,
 };
